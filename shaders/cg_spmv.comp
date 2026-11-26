@@ -1,0 +1,19 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// CG iteration, kernel 1 of 3:  q = S p  and per-workgroup partial sums of p.q
+void main() {
+    if (workgroupStatus() != 0u) return;
+
+    float acc = 0.0;
+    for (uint i = gl_GlobalInvocationID.x; i < pc.n; i += gridStride()) {
+        float s = 0.0;
+        uint end = rowPtr[i + 1u];
+        for (uint k = rowPtr[i]; k < end; ++k) s += valS[k] * vp[colIdx[k]];
+        vq[i] = s;
+        acc += vp[i] * s;
+    }
+    vec4 total = workgroupSum(vec4(acc, 0.0, 0.0, 0.0));
+    if (gl_LocalInvocationIndex == 0u) partials[slot(SLOT_PQ, gl_WorkGroupID.x)] = total.x;
+}

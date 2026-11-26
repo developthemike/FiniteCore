@@ -1,0 +1,15 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// T += dT, then dT = 0. Idempotent, so it can be recorded at the end of every
+// CG chunk: it only acts once the solve has converged (or when forced).
+void main() {
+    if (pc.force == 0u) {
+        if (workgroupStatus() != 1u) return;
+    }
+    for (uint i = gl_GlobalInvocationID.x; i < pc.n; i += gridStride()) {
+        T[i] += vx[i];
+        vx[i] = 0.0;
+    }
+}

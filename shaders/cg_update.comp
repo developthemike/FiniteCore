@@ -1,0 +1,49 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// CG iteration, kernel 2 of 3. Every workgroup redundantly finishes the p.q and
+// r.z reductions (at most MAX_GROUPS values each), so no separate "scalar"
+// dispatch is needed. Then:
+//   alpha = rz / pq;  x += alpha p;  r -= alpha q;  z = D^{-1} r
+// and partial sums of the new r.z (into the other ping-pong slot) and r.r.
+void main() {
+    if (workgroupStatus() != 0u) return;
+
+    uint lid = gl_LocalInvocationIndex;
+    uint rzSlot  = (pc.parity == 0u) ? SLOT_RZ0 : SLOT_RZ1;
+    uint rzNext  = (pc.parity == 0u) ? SLOT_RZ1 : SLOT_RZ0;
+
+    vec4 v = vec4(0.0);
+    if (lid < pc.numGroups) {
+        v.x = partials[slot(SLOT_PQ, lid)];
+        v.y = partials[slot(rzSlot, lid)];
+    }
+    vec4 s = workgroupSum(v);
+    float pq = s.x;
+    float rz = s.y;
+    if (!(pq > 0.0) || !(rz > 0.0)) {
+        // Loss of positive definiteness / NaN: every workgroup sees the same
+        // values and bails out; the host then applies the current increment.
+        if (gl_GlobalInvocationID.x == 0u) sc.converged = 2u;
+        return;
+    }
+    float alpha = rz / pq;
+
+    float accRZ = 0.0;
+    float accRR = 0.0;
+    for (uint i = gl_GlobalInvocationID.x; i < pc.n; i += gridStride()) {
+        float ri = vr[i] - alpha * vq[i];
+        float zi = invDiag[i] * ri;
+        vx[i] += alpha * vp[i];
+        vr[i] = ri;
+        vz[i] = zi;
+        accRZ += ri * zi;
+        accRR += ri * ri;
+    }
+    vec4 total = workgroupSum(vec4(accRZ, accRR, 0.0, 0.0));
+    if (lid == 0u) {
+        partials[slot(rzNext, gl_WorkGroupID.x)] = total.x;
+        partials[slot(SLOT_RR, gl_WorkGroupID.x)] = total.y;
+    }
+}

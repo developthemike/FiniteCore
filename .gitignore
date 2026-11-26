@@ -1,0 +1,5 @@
+# Build artifacts
+build/
+
+# Generated simulation results (GIF, CSV, PNG, VTK)
+output/

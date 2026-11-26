@@ -1,0 +1,16 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// Single workgroup: finishes |r0|^2 and resets the solver status for this step.
+void main() {
+    uint lid = gl_LocalInvocationIndex;
+    float v = (lid < pc.numGroups) ? partials[slot(SLOT_RR, lid)] : 0.0;
+    vec4 total = workgroupSum(vec4(v, 0.0, 0.0, 0.0));
+    if (lid == 0u) {
+        sc.rr0 = total.x;
+        sc.rr = total.x;
+        sc.iterations = 0u;
+        sc.converged = (total.x <= pc.absTolSq) ? 1u : 0u;
+    }
+}

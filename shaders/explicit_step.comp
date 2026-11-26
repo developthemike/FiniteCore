@@ -1,0 +1,13 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// Forward Euler with a lumped (diagonal) mass matrix:
+//   dT = M_L^{-1} * dt * (F - A T^n)
+// The increment goes to vx; apply_delta adds it to T afterwards (T must not be
+// modified while neighbouring rows are still reading it).
+void main() {
+    for (uint i = gl_GlobalInvocationID.x; i < pc.n; i += gridStride()) {
+        vx[i] = invDiag[i] * (loadF[i] - applyDtA(i));
+    }
+}

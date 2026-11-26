@@ -1,0 +1,41 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// CG iteration, kernel 3 of 3: convergence test and new search direction.
+//   beta = rz_new / rz_old;  p = z + beta p
+// Each workgroup reduces the partials itself; workgroup 0 records the status.
+void main() {
+    if (workgroupStatus() != 0u) return;
+
+    uint lid = gl_LocalInvocationIndex;
+    uint rzOldSlot = (pc.parity == 0u) ? SLOT_RZ0 : SLOT_RZ1;
+    uint rzNewSlot = (pc.parity == 0u) ? SLOT_RZ1 : SLOT_RZ0;
+
+    vec4 v = vec4(0.0);
+    if (lid < pc.numGroups) {
+        v.x = partials[slot(rzNewSlot, lid)];
+        v.y = partials[slot(rzOldSlot, lid)];
+        v.z = partials[slot(SLOT_RR, lid)];
+    }
+    vec4 s = workgroupSum(v);
+    float rzNew = s.x;
+    float rzOld = s.y;
+    float rr = s.z;
+
+    bool conv = rr <= max(pc.tolSq * sc.rr0, pc.absTolSq);
+    bool broken = !(rzOld > 0.0);
+
+    if (gl_GlobalInvocationID.x == 0u) {
+        sc.iterations += 1u;
+        sc.rr = rr;
+        if (broken) sc.converged = 2u;
+        else if (conv) sc.converged = 1u;
+    }
+    if (conv || broken) return;
+
+    float beta = rzNew / rzOld;
+    for (uint i = gl_GlobalInvocationID.x; i < pc.n; i += gridStride()) {
+        vp[i] = vz[i] + beta * vp[i];
+    }
+}
