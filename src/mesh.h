@@ -54,19 +54,29 @@ Mesh makeRectangleMesh(double x0, double y0, double sx, double sy, int nx, int n
 // (z); aliases xmin..zmax.
 Mesh makeBoxMesh(double x0, double y0, double z0, double sx, double sy, double sz, int nx, int ny, int nz);
 
-// A solid tube swept along a circular arc in the x-z plane (or a straight line
-// along x when bend = 0), centred on `origin`. The radius varies along the
-// tube, and the cross-section can be any star shape. Built by mapping a box
-// mesh: the square cross-section goes onto the unit disc with the concentric
-// (Shirley-Chiu) map, is scaled by radius(s) * section(angle) and is placed
-// in the plane normal to the centre line. Sides: start (s = 0), end (s = 1)
-// and surface (the lateral skin).
+// A tube swept along a circular arc in the x-z plane (or a straight line along
+// x when bend = 0), centred on `origin`. The radius varies along the tube, and
+// the cross-section can be any star shape. Built by mapping a box mesh: the
+// square cross-section goes onto the unit disc with the concentric
+// (Shirley-Chiu) map, is scaled by radius(s) * section(angle, s) and is placed
+// in the plane normal to the centre line. Angle 0 points along N (towards the
+// centre of the bend; +z for a straight tube), +pi/2 along T x N (-y).
+//
+// With a cavity the tube is hollow: a round hole of radius cavity(s) runs
+// along the centre line and is open at both ends. The box is then mapped onto
+// the ring between the hole and the outer skin (through the wall x around,
+// with the seam joined), keeping 4 * cellsAcross cells around like the solid
+// tube's outer ring and cellsAcross / 2 (at least 2) through the wall.
+//
+// Sides: start (s = 0), end (s = 1), surface (the outer skin) and, when
+// hollow, cavity (the wall of the hole).
 struct TubeSpec {
     double origin[3] = {0, 0, 0};
     double length = 0.1;  // along the centre line [m]
     double bend = 0.0;    // radius of the centre-line arc [m]; 0 = straight
-    std::function<double(double)> radius;   // radius(s), s in [0, 1] along the tube [m]
-    std::function<double(double)> section;  // relative radius vs. angle around the axis
+    std::function<double(double)> radius;           // radius(s), s in [0, 1] along the tube [m]
+    std::function<double(double, double)> section;  // relative radius vs. (angle, s)
+    std::function<double(double)> cavity;           // hole radius(s) [m]; empty = solid
     int cellsAlong = 64, cellsAcross = 12;
 };
 Mesh makeTubeMesh(const TubeSpec& spec);

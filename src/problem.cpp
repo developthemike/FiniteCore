@@ -137,33 +137,48 @@ void parseBlock(const SectionReader& r, const std::string& mtype, MeshDef& md) {
 }
 
 // Tube: a solid swept along a circular arc with a radius profile radius(s)
-// (s in [0, 1] along the centre line) and a cross-section shape section(angle).
+// (s in [0, 1] along the centre line) and a cross-section shape
+// section(angle, s); optionally hollow with a round hole of radius cavity(s).
 void parseTube(const SectionReader& r, const Constants& consts, MeshDef& md) {
     md.kind = "tube";
     md.dim = 3;
     md.length = positive(r, "length", r.numberRequired("length"));
     md.bend = r.number("bend", 0.0);
     if (md.bend < 0) r.fail("bend", "must be >= 0 (0 = straight)");
-    auto profile = [&](const std::string& key, const std::string& def, const std::string& var) {
-        const std::string text = key == "radius" ? r.strRequired(key) : r.str(key, def);
+    auto profile = [&](const std::string& key, const std::string& def, const Expr::VarNames& vars) {
+        const std::string text = def.empty() ? r.strRequired(key) : r.str(key, def);
         try {
-            Expr e = Expr::parse(text, consts, {var, "", "", ""});
+            Expr e = Expr::parse(text, consts, vars);
             return e;
         } catch (const std::runtime_error& err) {
             r.fail(key, err.what());
         }
     };
-    md.radius = profile("radius", "", "s");
-    md.section = profile("section", "1", "angle");
+    constexpr double pi = 3.14159265358979323846;
+    md.radius = profile("radius", "", {"s", "", "", ""});
+    md.section = profile("section", "1", {"angle", "s", "", ""});
+    if (r.has("cavity")) md.cavity = profile("cavity", "", {"s", "", "", ""});
     for (int k = 0; k <= 1000; ++k) {
         const double sv = k / 1000.0;
         const double rv = md.radius.eval(sv, 0, 0, 0);
         if (!(rv > 0) || !std::isfinite(rv))
             r.fail("radius", "must be positive for every s in [0, 1] (radius(" + fmt(sv) + ") = " + fmt(rv) + ")");
-        const double av = -3.14159265358979323846 + 2.0 * 3.14159265358979323846 * sv;
-        const double sec = md.section.eval(av, 0, 0, 0);
-        if (!(sec > 0) || !std::isfinite(sec))
-            r.fail("section", "must be positive for every angle (section(" + fmt(av) + ") = " + fmt(sec) + ")");
+        if (md.cavity.valid()) {
+            const double cv = md.cavity.eval(sv, 0, 0, 0);
+            if (!(cv > 0) || !std::isfinite(cv))
+                r.fail("cavity", "must be positive for every s in [0, 1]: the hole runs through the tube; leave "
+                                 "cavity out for a solid tube (cavity(" + fmt(sv) + ") = " + fmt(cv) + ")");
+        }
+    }
+    for (int i = 0; i <= 100; ++i) {
+        const double sv = i / 100.0;
+        for (int k = 0; k <= 360; ++k) {
+            const double av = -pi + 2.0 * pi * k / 360.0;
+            const double sec = md.section.eval(av, sv, 0, 0);
+            if (!(sec > 0) || !std::isfinite(sec))
+                r.fail("section", "must be positive for every angle and s (section(" + fmt(av) + ", " + fmt(sv) +
+                                      ") = " + fmt(sec) + ")");
+        }
     }
     const std::vector<double> cells = r.numbers("cells");
     if (!cells.empty()) {
@@ -181,7 +196,7 @@ void parseTube(const SectionReader& r, const Constants& consts, MeshDef& md) {
         for (int a = 0; a < 3; ++a) md.origin[a] = origin[a];
     }
     for (const char* key : {"size", "width", "height", "nx", "ny", "nz", "thickness", "pattern"})
-        if (r.has(key)) r.fail(key, "not used by tube meshes (use length, bend, radius, section, cells)");
+        if (r.has(key)) r.fail(key, "not used by tube meshes (use length, bend, radius, section, cavity, cells)");
 }
 
 }  // namespace

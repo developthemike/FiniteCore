@@ -63,7 +63,8 @@ struct MeshDef {
     // tube
     double length = 0.0, bend = 0.0;  // centre-line length and arc radius [m]
     Expr radius;   // radius(s) [m], s in [0, 1] along the tube
-    Expr section;  // relative radius vs. angle around the centre line
+    Expr section;  // relative radius vs. (angle around the centre line, s)
+    Expr cavity;   // radius(s) [m] of a hole along the centre line; invalid = solid
 };
 
 struct TimeDef {

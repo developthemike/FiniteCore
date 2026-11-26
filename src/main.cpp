@@ -295,7 +295,8 @@ int run(int argc, char** argv) {
         spec.length = md.length;
         spec.bend = md.bend;
         spec.radius = [&md](double s) { return md.radius.eval(s, 0, 0, 0); };
-        spec.section = [&md](double a) { return md.section.eval(a, 0, 0, 0); };
+        spec.section = [&md](double a, double s) { return md.section.eval(a, s, 0, 0); };
+        if (md.cavity.valid()) spec.cavity = [&md](double s) { return md.cavity.eval(s, 0, 0, 0); };
         spec.cellsAlong = md.cells[0];
         spec.cellsAcross = md.cells[1];
         mesh = makeTubeMesh(spec);

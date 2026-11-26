@@ -204,36 +204,98 @@ Mesh makeTubeMesh(const TubeSpec& t) {
     if (t.cellsAlong < 1 || t.cellsAcross < 2) throw std::runtime_error("tube: needs >= 1 cell along and >= 2 across");
     if (!t.radius) throw std::runtime_error("tube: no radius profile");
 
-    // Reference box: u in [0, 1] along the tube, (v, w) in [-1, 1]^2 across it.
-    Mesh m = makeBoxMesh(0.0, -1.0, -1.0, 1.0, 2.0, 2.0, t.cellsAlong, t.cellsAcross, t.cellsAcross);
+    const bool hollow = static_cast<bool>(t.cavity);
+    const int wallCells = std::max(2, (t.cellsAcross + 1) / 2);
+    const int aroundCells = 4 * t.cellsAcross;
+    Mesh m;
+    if (!hollow) {
+        // Reference box: u in [0, 1] along the tube, (v, w) in [-1, 1]^2 across it.
+        m = makeBoxMesh(0.0, -1.0, -1.0, 1.0, 2.0, 2.0, t.cellsAlong, t.cellsAcross, t.cellsAcross);
+    } else {
+        // Reference box: u in [0, 1] along the tube, v in [0, 1] around it and
+        // w in [0, 1] from the cavity to the skin. The nodes at v = 1 are
+        // merged into v = 0 to close the ring. Kuhn subdivision cuts every
+        // v = const face along the same diagonal, so the seam stays conforming.
+        const int nx = t.cellsAlong, ny = aroundCells, nz = wallCells;
+        Mesh box = makeBoxMesh(0.0, 0.0, 0.0, 1.0, 1.0, 1.0, nx, ny, nz);
+        auto id = [nx, ny](int i, int j, int k) {
+            return static_cast<uint32_t>((static_cast<uint64_t>(k) * (ny + 1) + j) * (nx + 1) + i);
+        };
+        std::vector<uint32_t> remap(box.numNodes());
+        m.dim = 3;
+        for (int k = 0; k <= nz; ++k)
+            for (int j = 0; j < ny; ++j)
+                for (int i = 0; i <= nx; ++i) {
+                    const uint32_t old = id(i, j, k);
+                    remap[old] = static_cast<uint32_t>(m.x.size());
+                    m.x.push_back(box.x[old]);
+                    m.y.push_back(box.y[old]);
+                    m.z.push_back(box.z[old]);
+                }
+        for (int k = 0; k <= nz; ++k)
+            for (int i = 0; i <= nx; ++i) remap[id(i, ny, k)] = remap[id(i, 0, k)];
+        m.cells.reserve(box.cells.size());
+        for (uint32_t n : box.cells) m.cells.push_back(remap[n]);
+        // Box sides: 0/1 = u ends, 2/3 = the seam (now interior), 4 = cavity, 5 = skin.
+        for (const Mesh::Face& f : box.boundary) {
+            if (f.side == 2 || f.side == 3) continue;
+            const int side = f.side <= 1 ? f.side : (f.side == 5 ? 2 : 3);
+            m.boundary.push_back({{remap[f.n[0]], remap[f.n[1]], remap[f.n[2]]}, side});
+        }
+    }
     double inner = 0.0;  // deepest reach towards the bend centre, relative to the bend radius
     for (size_t i = 0; i < m.numNodes(); ++i) {
         const double u = m.x[i], v = m.y[i], w = m.z[i];
-        // Concentric square-to-disc map: concentric squares become circles,
-        // so the cells stay well shaped (no degenerate corners).
-        double px = 0.0, py = 0.0;
-        if (v != 0.0 || w != 0.0) {
-            double rr, th;
-            if (std::fabs(v) >= std::fabs(w)) {
-                rr = v;
-                th = (pi / 4.0) * (w / v);
-            } else {
-                rr = w;
-                th = pi / 2.0 - (pi / 4.0) * (v / w);
+        double angle;               // angle around the centre line
+        double px = 0.0, py = 0.0;  // solid: point in the unit disc
+        double wall = 0.0;          // hollow: 0 at the cavity, 1 at the skin
+        double hole = 0.0;          // hollow: cavity radius at u [m]
+        if (!hollow) {
+            // Concentric square-to-disc map: concentric squares become circles,
+            // so the cells stay well shaped (no degenerate corners).
+            if (v != 0.0 || w != 0.0) {
+                double rr, th;
+                if (std::fabs(v) >= std::fabs(w)) {
+                    rr = v;
+                    th = (pi / 4.0) * (w / v);
+                } else {
+                    rr = w;
+                    th = pi / 2.0 - (pi / 4.0) * (v / w);
+                }
+                px = rr * std::cos(th);
+                py = rr * std::sin(th);
             }
-            px = rr * std::cos(th);
-            py = rr * std::sin(th);
+            angle = std::atan2(py, px);
+        } else {
+            angle = -pi + 2.0 * pi * v;  // the seam lies at +-pi
+            wall = w;
+            hole = t.cavity(u);
+            if (!(hole > 0) || !std::isfinite(hole))
+                throw std::runtime_error("tube: cavity(s) must be positive (the hole runs through the tube); cavity(" +
+                                         std::to_string(u) + ") = " + std::to_string(hole));
         }
-        const double angle = std::atan2(py, px);
         const double r = t.radius(u);
-        const double sec = t.section ? t.section(angle) : 1.0;
+        const double sec = t.section ? t.section(angle, u) : 1.0;
         if (!(r > 0) || !std::isfinite(r))
             throw std::runtime_error("tube: radius(s) must be positive; radius(" + std::to_string(u) +
                                      ") = " + std::to_string(r));
         if (!(sec > 0) || !std::isfinite(sec))
-            throw std::runtime_error("tube: section(angle) must be positive; section(" + std::to_string(angle) +
-                                     ") = " + std::to_string(sec));
-        const double a = px * r * sec, b = py * r * sec;  // offsets along N and B
+            throw std::runtime_error("tube: section(angle, s) must be positive; section(" + std::to_string(angle) +
+                                     ", " + std::to_string(u) + ") = " + std::to_string(sec));
+        const double outer = r * sec;
+        if (hollow && !(hole < 0.98 * outer))
+            throw std::runtime_error("tube: the cavity breaks through the skin at s = " + std::to_string(u) +
+                                     ", angle = " + std::to_string(angle) + " (cavity " + std::to_string(hole) +
+                                     " m, outer radius " + std::to_string(outer) + " m)");
+        double a, b;  // offsets along N and B
+        if (hollow) {
+            const double dist = hole + wall * (outer - hole);
+            a = dist * std::cos(angle);
+            b = dist * std::sin(angle);
+        } else {
+            a = px * r * sec;
+            b = py * r * sec;
+        }
         const double ell = (u - 0.5) * t.length;
         double C[3], T[3], N[3];
         if (t.bend > 0) {
@@ -293,9 +355,13 @@ Mesh makeTubeMesh(const TubeSpec& t) {
         if (flip) std::swap(m.cells[4 * c + 1], m.cells[4 * c + 2]);
     }
 
-    m.sideNames = {"start", "end", "surface"};
     m.sideAliases.clear();
-    for (Mesh::Face& f : m.boundary) f.side = f.side <= 1 ? f.side : 2;
+    if (hollow) {
+        m.sideNames = {"start", "end", "surface", "cavity"};  // sides already assigned above
+    } else {
+        m.sideNames = {"start", "end", "surface"};
+        for (Mesh::Face& f : m.boundary) f.side = f.side <= 1 ? f.side : 2;
+    }
     auto [x0, x1] = std::minmax_element(m.x.begin(), m.x.end());
     auto [y0, y1] = std::minmax_element(m.y.begin(), m.y.end());
     auto [z0, z1] = std::minmax_element(m.z.begin(), m.z.end());
@@ -306,8 +372,10 @@ Mesh makeTubeMesh(const TubeSpec& t) {
     m.zmin = *z0;
     m.zmax = *z1;
     m.boxShaped = false;
-    m.description = "tube " + std::to_string(t.cellsAlong) + " x " + std::to_string(t.cellsAcross) + " x " +
-                    std::to_string(t.cellsAcross) + " cells";
+    m.description = hollow ? "hollow tube " + std::to_string(t.cellsAlong) + " along x " + std::to_string(wallCells) +
+                                 " through the wall x " + std::to_string(aroundCells) + " around"
+                           : "tube " + std::to_string(t.cellsAlong) + " x " + std::to_string(t.cellsAcross) + " x " +
+                                 std::to_string(t.cellsAcross) + " cells";
     return m;
 }
 
