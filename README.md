@@ -285,3 +285,9 @@ src/
 * A stronger preconditioner (Chebyshev polynomial or geometric multigrid) to cut CG
   iterations on fine meshes.
 * Temperature-dependent properties (Picard iterations per step) or quadratic elements.
+
+## AI-assisted development
+
+This project was developed with the help of AI-assisted tooling (e.g. AI coding
+assistants) for writing code, documentation and configurations. All changes are
+reviewed, and results are checked against the verification cases above.
